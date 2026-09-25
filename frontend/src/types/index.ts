@@ -95,6 +95,9 @@ export interface SupportGroup {
   createdAt: string;
   members: GroupMember[];
   messages?: GroupMessage[];
+  waitlist?: GroupWaitlist;
+  formerMembers?: GroupMember[];
+  myRole?: string | null;
   _count?: { members: number };
 }
 
@@ -104,7 +107,31 @@ export interface GroupMember {
   userId: string;
   joinedAt: string;
   role: string;
+  isActive?: boolean;
+  leaveReason?: string | null;
+  leftAt?: string | null;
   user: User;
+}
+
+export type WaitlistStatus = 'WAITING' | 'PROMOTED' | 'CANCELLED' | 'REMOVED';
+
+export interface GroupWaitlistEntry {
+  id: string;
+  groupId: string;
+  userId: string;
+  status: WaitlistStatus;
+  registeredAt: string;
+  promotedAt?: string | null;
+  removedAt?: string | null;
+  removedReason?: string | null;
+  user: Pick<User, 'id' | 'username' | 'nickname' | 'avatar'>;
+}
+
+export interface GroupWaitlist {
+  count: number;
+  entries: GroupWaitlistEntry[];
+  myPosition: number | null;
+  myEntryId: string | null;
 }
 
 export interface GroupMessage {

@@ -59,3 +59,32 @@ export const requireRole = (roles: string[]) => {
     next();
   };
 };
+
+// 公开接口使用：携带有效令牌时识别用户，无令牌或令牌失效时也放行
+export const optionalAuthMiddleware = async (req: AuthRequest, _res: Response, next: NextFunction) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) {
+      return next();
+    }
+
+    const decoded = jwt.verify(token, env.jwtSecret) as any;
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+      select: { id: true, role: true, username: true, isActive: true }
+    });
+
+    if (user && user.isActive) {
+      req.user = {
+        id: user.id,
+        role: user.role,
+        username: user.username
+      };
+    }
+  } catch {
+    // 忽略无效令牌，按未登录访客处理
+  }
+
+  next();
+};

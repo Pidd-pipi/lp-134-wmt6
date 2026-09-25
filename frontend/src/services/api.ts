@@ -84,6 +84,14 @@ export const groupAPI = {
   createGroup: (data: { name: string; description: string; topic: string; maxMembers?: number; meetingTime?: string; meetingFrequency?: string }) =>
     api.post('/groups', data),
   joinGroup: (id: string) => api.post(`/groups/${id}/join`),
+  leaveGroup: (id: string, data: { reason: string }) =>
+    api.post(`/groups/${id}/leave`, data),
+  closeGroup: (id: string) => api.post(`/groups/${id}/close`),
+  getWaitlist: (id: string) => api.get(`/groups/${id}/waitlist`),
+  removeWaitlistEntry: (id: string, entryId: string, data?: { reason?: string }) =>
+    api.delete(`/groups/${id}/waitlist/${entryId}`, { data }),
+  cancelWaitlistEntry: (id: string, entryId: string) =>
+    api.post(`/groups/${id}/waitlist/${entryId}/cancel`),
   sendMessage: (groupId: string, data: { content: string }) =>
     api.post(`/groups/${groupId}/messages`, data),
   createCheckInTemplate: (groupId: string, data: { title: string; description?: string; reminderTime: string }) =>
