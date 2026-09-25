@@ -45,6 +45,13 @@ enum CheckInStatus {
   MISSED
 }
 
+enum WaitlistStatus {
+  WAITING
+  PROMOTED
+  REMOVED
+  CANCELLED
+}
+
 model User {
   id              String          @id @default(uuid())
   username        String          @unique
@@ -64,6 +71,8 @@ model User {
   appointmentsAsClient Appointment[] @relation("ClientAppointments")
   appointmentsAsCounselor Appointment[] @relation("CounselorAppointments")
   groupMemberships GroupMember[]
+  groupWaitlistEntries GroupWaitlistEntry[]
+  groupMembershipHistory GroupMembershipHistory[]
   checkIns        CheckIn[]
   favorites       Favorite[]
   sentMessages    GroupMessage[]
@@ -220,9 +229,11 @@ model SupportGroup {
   updatedAt       DateTime        @updatedAt
   
   members         GroupMember[]
+  waitlistEntries GroupWaitlistEntry[]
+  membershipHistory GroupMembershipHistory[]
   messages        GroupMessage[]
   checkInTemplates CheckInTemplate[]
-  
+
   @@map("support_groups")
 }
 
@@ -232,13 +243,49 @@ model GroupMember {
   userId          String
   joinedAt        DateTime        @default(now())
   role            String          @default("member")
-  
-  group           SupportGroup    @relation(fields: [groupId], references: [id])
-  user            User            @relation(fields: [userId], references: [id])
+
+  group           SupportGroup    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   checkIns        CheckIn[]
-  
+
   @@unique([groupId, userId])
   @@map("group_members")
+}
+
+model GroupWaitlistEntry {
+  id              String          @id @default(uuid())
+  groupId         String
+  userId          String
+  status          WaitlistStatus  @default(WAITING)
+  registeredAt    DateTime        @default(now())
+  promotedAt      DateTime?
+  removedAt       DateTime?
+  removedBy       String?
+  removeReason    String?
+
+  group           SupportGroup    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([groupId, status, registeredAt])
+  @@map("group_waitlist_entries")
+}
+
+model GroupMembershipHistory {
+  id              String          @id @default(uuid())
+  groupId         String
+  userId          String
+  role            String          @default("member")
+  joinedAt        DateTime
+  leftAt          DateTime        @default(now())
+  leaveReason     String
+  leftBy          String
+
+  group           SupportGroup    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([groupId, leftAt])
+  @@map("group_membership_history")
 }
 
 model GroupMessage {
@@ -278,9 +325,9 @@ model CheckIn {
   moodRating      Int?
   createdAt       DateTime        @default(now())
   
-  template        CheckInTemplate @relation(fields: [templateId], references: [id])
-  member          GroupMember     @relation(fields: [memberId], references: [id])
-  user            User            @relation(fields: [userId], references: [id])
+  template        CheckInTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  member          GroupMember     @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   
   @@map("checkins")
 }

@@ -51,8 +51,37 @@ export const authMiddleware = async (req: AuthRequest, res: Response, next: Next
   }
 };
 
-export const requireRole = (roles: string[]) => {
-  return (req: AuthRequest, res: Response, next: NextFunction) => {
+/** 可选鉴权：携带合法 token 时填充 req.user，未携带或失效时保持匿名继续访问 */
+export const optionalAuthMiddleware = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const token = req.headers.authorization?.split(' ')[1];
+
+  if (!token) {
+    return next();
+  }
+
+  try {
+    const decoded = jwt.verify(token, env.jwtSecret) as any;
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+      select: { id: true, role: true, username: true, isActive: true }
+    });
+
+    if (user && user.isActive) {
+      req.user = {
+        id: user.id,
+        role: user.role,
+        username: user.username
+      };
+    }
+  } catch {
+    // 忽略无效 token，以匿名身份继续
+  }
+
+  next();
+};
+
+export const requireRole = (roles: string[]) => {  return (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!req.user || !roles.includes(req.user.role)) {
       return res.status(403).json({ error: messages.auth.forbidden });
     }

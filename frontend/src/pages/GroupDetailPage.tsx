@@ -1,8 +1,15 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { groupAPI } from '../services/api';
-import { SupportGroup, GroupMessage } from '../types';
+import { SupportGroup, GroupMessage, WaitlistEntry, GroupMembershipHistory } from '../types';
 import { useAuth } from '../context/AuthContext';
+
+const statusLabel: Record<string, { text: string; className: string }> = {
+  WAITING: { text: '等候中', className: 'bg-yellow-100 text-yellow-700' },
+  PROMOTED: { text: '已递补', className: 'bg-green-100 text-green-700' },
+  REMOVED: { text: '已移除', className: 'bg-red-100 text-red-700' },
+  CANCELLED: { text: '已取消', className: 'bg-gray-100 text-gray-600' }
+};
 
 const GroupDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -10,17 +17,36 @@ const GroupDetailPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [newMessage, setNewMessage] = useState('');
   const [isMember, setIsMember] = useState(false);
+  const [isLeader, setIsLeader] = useState(false);
+  const [showLeaveModal, setShowLeaveModal] = useState(false);
+  const [leaveReason, setLeaveReason] = useState('');
+  const [showWaitlistModal, setShowWaitlistModal] = useState(false);
+  const [waitlist, setWaitlist] = useState<WaitlistEntry[]>([]);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [history, setHistory] = useState<GroupMembershipHistory[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { user } = useAuth();
+
+  const myWaitlist = group?.myWaitlist ?? null;
+  const isWaiting = myWaitlist?.status === 'WAITING';
+
+  const refreshGroup = async () => {
+    const response = await groupAPI.getGroup(id!);
+    setGroup(response.data);
+    if (user) {
+      const member = response.data.members?.find((m: any) => m.userId === user.id);
+      setIsMember(!!member);
+      setIsLeader(member?.role === 'leader');
+    } else {
+      setIsMember(false);
+      setIsLeader(false);
+    }
+  };
 
   useEffect(() => {
     const fetchGroup = async () => {
       try {
-        const response = await groupAPI.getGroup(id!);
-        setGroup(response.data);
-        if (user) {
-          setIsMember(response.data.members?.some((m: any) => m.userId === user.id) || false);
-        }
+        await refreshGroup();
       } catch (error) {
         console.error('获取小组详情失败:', error);
       } finally {
@@ -28,6 +54,7 @@ const GroupDetailPage: React.FC = () => {
       }
     };
     fetchGroup();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, user]);
 
   useEffect(() => {
@@ -36,13 +63,93 @@ const GroupDetailPage: React.FC = () => {
 
   const handleJoinGroup = async () => {
     try {
-      await groupAPI.joinGroup(id!);
-      const response = await groupAPI.getGroup(id!);
-      setGroup(response.data);
-      setIsMember(true);
-      alert('加入小组成功！');
+      const res = await groupAPI.joinGroup(id!);
+      if (res.data.waitlisted) {
+        alert(`小组已满，已为您登记候补，前面还有 ${res.data.aheadCount} 人。`);
+      } else {
+        alert('加入小组成功！');
+      }
+      await refreshGroup();
     } catch (error: any) {
-      alert(error.response?.data?.error || '加入失败');
+      alert(error.response?.data?.error || '操作失败');
+    }
+  };
+
+  const handleCancelWaitlist = async () => {
+    if (!window.confirm('确定取消候补登记吗？')) return;
+    try {
+      await groupAPI.cancelWaitlist(id!);
+      await refreshGroup();
+    } catch (error: any) {
+      alert(error.response?.data?.error || '取消候补失败');
+    }
+  };
+
+  const handleLeaveGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!leaveReason.trim()) {
+      alert('请填写退出原因');
+      return;
+    }
+    try {
+      const res = await groupAPI.leaveGroup(id!, { reason: leaveReason.trim() });
+      setShowLeaveModal(false);
+      setLeaveReason('');
+      alert(
+        res.data.promotedUserId
+          ? '已退出小组，已自动递补最早等候者。'
+          : '已退出小组。'
+      );
+      await refreshGroup();
+    } catch (error: any) {
+      alert(error.response?.data?.error || '退出失败');
+    }
+  };
+
+  const handleCloseGroup = async () => {
+    if (!window.confirm('关闭后将停止登记与候补递补，成员和候补名单会保留。确定关闭吗？')) return;
+    try {
+      await groupAPI.closeGroup(id!);
+      alert('小组已关闭');
+      await refreshGroup();
+    } catch (error: any) {
+      alert(error.response?.data?.error || '关闭失败');
+    }
+  };
+
+  const openWaitlistModal = async () => {
+    setShowWaitlistModal(true);
+    try {
+      const res = await groupAPI.getWaitlist(id!);
+      setWaitlist(res.data);
+    } catch (error: any) {
+      alert(error.response?.data?.error || '获取候补名单失败');
+    }
+  };
+
+  const handleRemoveWaitlistEntry = async (entry: WaitlistEntry) => {
+    const reason = window.prompt(
+      `确定将「${entry.user.nickname || entry.user.username}」移出候补队列吗？可填写移除原因：`,
+      '失联'
+    );
+    if (reason === null) return;
+    try {
+      await groupAPI.removeWaitlistEntry(id!, entry.id, { reason: reason.trim() || undefined });
+      const res = await groupAPI.getWaitlist(id!);
+      setWaitlist(res.data);
+      await refreshGroup();
+    } catch (error: any) {
+      alert(error.response?.data?.error || '移除失败');
+    }
+  };
+
+  const openHistoryModal = async () => {
+    setShowHistoryModal(true);
+    try {
+      const res = await groupAPI.getMembershipHistory(id!);
+      setHistory(res.data);
+    } catch (error: any) {
+      alert(error.response?.data?.error || '获取成员变动记录失败');
     }
   };
 
@@ -53,8 +160,7 @@ const GroupDetailPage: React.FC = () => {
     try {
       await groupAPI.sendMessage(id!, { content: newMessage });
       setNewMessage('');
-      const response = await groupAPI.getGroup(id!);
-      setGroup(response.data);
+      await refreshGroup();
     } catch (error: any) {
       alert(error.response?.data?.error || '发送失败');
     }
@@ -78,6 +184,82 @@ const GroupDetailPage: React.FC = () => {
       </div>
     );
   }
+
+  const renderJoinArea = () => {
+    if (!user) return null;
+    if (isMember) {
+      return (
+        <div className="mt-6 flex flex-wrap items-center gap-3">
+          <span className="text-sm text-green-700 bg-green-100 px-3 py-1 rounded-full">
+            {isLeader ? '您是组长' : '您已加入该小组'}
+          </span>
+          {!isLeader && (
+            <button onClick={() => setShowLeaveModal(true)} className="btn-secondary text-red-600">
+              退出小组
+            </button>
+          )}
+          {isLeader && (
+            <>
+              <button onClick={openWaitlistModal} className="btn-secondary">
+                候补名单 ({group.waitingCount || 0})
+              </button>
+              <button onClick={openHistoryModal} className="btn-secondary">
+                退出记录
+              </button>
+              {group.status !== 'CLOSED' && (
+                <button onClick={handleCloseGroup} className="btn-secondary text-red-600">
+                  关闭小组
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      );
+    }
+
+    if (group.status === 'CLOSED') {
+      return (
+        <p className="mt-6 text-sm text-gray-500">
+          小组已关闭，登记与候补均已停止。
+        </p>
+      );
+    }
+
+    if (isWaiting) {
+      return (
+        <div className="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+          <p className="text-sm text-yellow-800">
+            🕓 您已在候补队列中，登记时间：{new Date(myWaitlist!.registeredAt).toLocaleString()}
+          </p>
+          <p className="text-sm font-semibold text-yellow-900 mt-1">
+            前面还有 {myWaitlist!.aheadCount} 人，有成员退出时将按登记顺序自动递补并通知您。
+          </p>
+          <button onClick={handleCancelWaitlist} className="btn-secondary mt-3 text-sm">
+            取消候补
+          </button>
+        </div>
+      );
+    }
+
+    if (group.status === 'FULL') {
+      return (
+        <div className="mt-6">
+          <p className="text-sm text-gray-600 mb-2">
+            小组已满，当前有 {group.waitingCount || 0} 人候补。登记后有名额腾出将按顺序自动递补。
+          </p>
+          <button onClick={handleJoinGroup} className="btn-primary">
+            登记候补
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <button onClick={handleJoinGroup} className="btn-primary mt-6">
+        加入小组
+      </button>
+    );
+  };
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -116,16 +298,14 @@ const GroupDetailPage: React.FC = () => {
                   {group.meetingFrequency}
                 </span>
               )}
+              {(group.waitingCount || 0) > 0 && (
+                <span className="px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full">
+                  候补 {group.waitingCount} 人
+                </span>
+              )}
             </div>
 
-            {user && !isMember && group.status === 'ACTIVE' && (
-              <button
-                onClick={handleJoinGroup}
-                className="btn-primary mt-6"
-              >
-                加入小组
-              </button>
-            )}
+            {renderJoinArea()}
           </div>
 
           <div className="bg-white rounded-lg shadow-md">
@@ -213,9 +393,157 @@ const GroupDetailPage: React.FC = () => {
                 </div>
               ))}
             </div>
+
+            {(group.waitingCount || 0) > 0 && (
+              <div className="mt-4 pt-4 border-t text-sm text-gray-600">
+                🕓 {group.waitingCount} 人正在候补
+                {isWaiting && `，您前面还有 ${myWaitlist!.aheadCount} 人`}
+              </div>
+            )}
+
+            {isLeader && (
+              <div className="mt-4 pt-4 border-t space-y-2">
+                <button onClick={openWaitlistModal} className="btn-secondary w-full text-sm">
+                  管理候补名单
+                </button>
+                <button onClick={openHistoryModal} className="btn-secondary w-full text-sm">
+                  成员退出记录
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
+
+      {showLeaveModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl p-6 w-full max-w-md">
+            <h2 className="text-xl font-bold mb-2">退出小组</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              {group.status === 'CLOSED'
+                ? '小组已关闭，退出后名额不再递补。请填写退出原因：'
+                : '退出后名额将按候补登记顺序自动递补。请填写退出原因：'}
+            </p>
+            <form onSubmit={handleLeaveGroup}>
+              <textarea
+                value={leaveReason}
+                onChange={e => setLeaveReason(e.target.value)}
+                className="input-field min-h-[100px]"
+                placeholder="例如：时间安排冲突、个人原因等"
+                required
+                minLength={2}
+                maxLength={500}
+              />
+              <div className="flex justify-end gap-3 mt-4">
+                <button
+                  type="button"
+                  onClick={() => { setShowLeaveModal(false); setLeaveReason(''); }}
+                  className="btn-secondary"
+                >
+                  取消
+                </button>
+                <button type="submit" className="btn-primary bg-red-600 hover:bg-red-700">
+                  确认退出
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showWaitlistModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl p-6 w-full max-w-2xl max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold">
+                候补名单
+                {group.status === 'CLOSED' && (
+                  <span className="ml-2 text-sm font-normal text-gray-500">（小组已关闭，名单保留）</span>
+                )}
+              </h2>
+              <button onClick={() => setShowWaitlistModal(false)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">
+                ×
+              </button>
+            </div>
+            {waitlist.length === 0 ? (
+              <p className="text-center text-gray-500 py-8">暂无候补记录</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-gray-500 border-b">
+                    <th className="py-2 pr-2">登记时间</th>
+                    <th className="py-2 pr-2">用户</th>
+                    <th className="py-2 pr-2">状态</th>
+                    <th className="py-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {waitlist.map(entry => (
+                    <tr key={entry.id} className="border-b last:border-0">
+                      <td className="py-2 pr-2 whitespace-nowrap">
+                        {new Date(entry.registeredAt).toLocaleString()}
+                      </td>
+                      <td className="py-2 pr-2">
+                        {entry.user.nickname || entry.user.username}
+                        {entry.removeReason && (
+                          <span className="block text-xs text-gray-400">原因：{entry.removeReason}</span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-2">
+                        <span className={`px-2 py-0.5 rounded-full text-xs ${statusLabel[entry.status]?.className || ''}`}>
+                          {statusLabel[entry.status]?.text || entry.status}
+                        </span>
+                      </td>
+                      <td className="py-2 text-right">
+                        {entry.status === 'WAITING' && group.status !== 'CLOSED' && (
+                          <button
+                            onClick={() => handleRemoveWaitlistEntry(entry)}
+                            className="text-red-600 hover:underline text-xs"
+                          >
+                            移除（失联）
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showHistoryModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl p-6 w-full max-w-2xl max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold">成员退出记录</h2>
+              <button onClick={() => setShowHistoryModal(false)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">
+                ×
+              </button>
+            </div>
+            {history.length === 0 ? (
+              <p className="text-center text-gray-500 py-8">暂无退出记录</p>
+            ) : (
+              <div className="space-y-3">
+                {history.map(item => (
+                  <div key={item.id} className="border rounded-lg p-3 text-sm">
+                    <div className="flex justify-between items-start mb-1">
+                      <span className="font-medium">
+                        {item.user.nickname || item.user.username}
+                      </span>
+                      <span className="text-xs text-gray-400">
+                        {new Date(item.leftAt).toLocaleString()}
+                      </span>
+                    </div>
+                    <p className="text-gray-600">退出原因：{item.leaveReason}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

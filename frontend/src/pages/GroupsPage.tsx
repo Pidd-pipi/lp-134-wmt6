@@ -124,6 +124,8 @@ const GroupsPage: React.FC = () => {
               </div>
               <span className="text-sm text-gray-500">
                 {group.members?.length || 0}/{group.maxMembers} 人
+                {group.status === 'FULL' && (group._count?.waitlistEntries ?? 0) > 0 &&
+                  ` · 候补 ${group._count?.waitlistEntries} 人`}
               </span>
             </div>
           </Link>
